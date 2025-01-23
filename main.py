@@ -1,9 +1,10 @@
 import tkinter as tk
 from tkinter import ttk, scrolledtext
 import tkinter.messagebox as messagebox
+import pygetwindow as gw
 from datetime import datetime
 from enum import Enum, auto
-import pyautogui, json, time, os
+import pyautogui, json, time, os, shutil, re, pyperclip
 
 class WordbookType(Enum):
     ORIGINAL = "원래 순서"
@@ -39,11 +40,95 @@ class Controller:
         
         print("Controller initialized.")
         
+        appdata_path = os.getenv('APPDATA')
+        
         # 컨트롤러에서 관리할 데이터나 기능 초기화
         self.directories = {
             "Work": "/work",
             "Output": "/output",
+            "Answer": os.path.join(appdata_path, 'FactoryVoca Pro', '정답')
         }
+                
+        self.initialize_directories()
+        self.delete_work_contents()
+        self.delete_answer_sheet_contents()
+
+    def initialize_directories(self):
+        """폴더가 없으면 생성하는 메서드"""
+        for dir_name, dir_path in self.directories.items():
+            if not os.path.exists(dir_path):
+                os.makedirs(dir_path)
+                self.log(f"{dir_name} 폴더가 생성되었습니다: {dir_path}")
+            else:
+                self.log(f"{dir_name} 폴더가 이미 존재합니다: {dir_path}")
+                
+    def delete_work_contents(self):
+        """작업 폴더 내의 모든 내용물을 삭제 (폴더는 유지)"""
+        if not os.path.exists(self.directories['Work']):
+            self.log(f"작업 폴더가 존재하지 않습니다: {self.directories['Work']}")
+            return
+        
+        # 폴더 내 파일 및 하위 폴더 목록 가져오기
+        items = os.listdir(self.directories['Work'])
+        if not items:
+            self.log("작업 폴더가 이미 비어 있습니다.")
+            return
+        
+        # 사용자에게 삭제 확인
+        confirm = messagebox.askyesno("경고", "작업 폴더 내 모든 내용물을 삭제하시겠습니까?")
+        if not confirm:
+            self.log("삭제가 취소되었습니다.")
+            return
+        
+        # 파일 및 폴더 삭제
+        for item_name in items:
+            item_path = os.path.join(self.directories['Work'], item_name)
+            try:
+                if os.path.isfile(item_path) or os.path.islink(item_path):
+                    os.remove(item_path)  # 파일 또는 심볼릭 링크 삭제
+                    self.log(f"파일 삭제: {item_path}")
+                elif os.path.isdir(item_path):
+                    shutil.rmtree(item_path)  # 하위 폴더 및 파일 모두 삭제
+                    self.log(f"폴더 삭제: {item_path}")
+            except Exception as e:
+                self.log(f"삭제 중 오류 발생: {item_path} - {str(e)}")
+        
+        self.log("작업 폴더 내 모든 내용물이 삭제되었습니다.")
+        messagebox.showinfo("완료", "작업 폴더 내 모든 내용물이 삭제되었습니다.")
+                
+    def delete_answer_sheet_contents(self):
+        """정답지 폴더 내의 모든 내용물을 삭제 (폴더는 유지)"""
+        if not os.path.exists(self.directories['Answer']):
+            self.log(f"정답지 폴더가 존재하지 않습니다: {self.directories['Answer']}")
+            return
+        
+        # 폴더 내 파일 및 하위 폴더 목록 가져오기
+        items = os.listdir(self.directories['Answer'])
+        if not items:
+            self.log("정답지 폴더가 이미 비어 있습니다.")
+            return
+        
+        # 사용자에게 삭제 확인
+        confirm = messagebox.askyesno("경고", "정답지 폴더 내 모든 내용물을 삭제하시겠습니까?")
+        if not confirm:
+            self.log("삭제가 취소되었습니다.")
+            return
+        
+        # 파일 및 폴더 삭제
+        for item_name in items:
+            item_path = os.path.join(self.directories['Answer'], item_name)
+            try:
+                if os.path.isfile(item_path) or os.path.islink(item_path):
+                    os.remove(item_path)  # 파일 또는 심볼릭 링크 삭제
+                    self.log(f"파일 삭제: {item_path}")
+                elif os.path.isdir(item_path):
+                    shutil.rmtree(item_path)  # 하위 폴더 및 파일 모두 삭제
+                    self.log(f"폴더 삭제: {item_path}")
+            except Exception as e:
+                self.log(f"삭제 중 오류 발생: {item_path} - {str(e)}")
+        
+        self.log("정답지 폴더 내 모든 내용물이 삭제되었습니다.")
+        messagebox.showinfo("완료", "정답지 폴더 내 모든 내용물이 삭제되었습니다.")            
 
     def log(self, message: str):
         """로그 메시지를 출력"""
@@ -212,7 +297,7 @@ class AppUI:
             "추가기능 -> 날짜 설정에서 빈칸으로 설정하기",
             "엑셀 인쇄 페이지 크기 맞추기",
             "단어장 검색해서 설정하기",
-            "\'첫단어에 유닛이름 표시\' 체크 해제하기"
+            "'첫단어에 유닛이름 표시' 해제하기"
         ]
         
         # 체크박스 변수들을 저장할 딕셔너리
@@ -420,6 +505,9 @@ class AppUI:
         # TODO: 실제 중단 로직 구현
         self.log("작업 중단")
 
+class PDFManager:
+    def __init__(self, controller: Controller):
+        self.controller = controller
 
 # 매크로 클래스
 class DebugWindow:
@@ -441,6 +529,15 @@ class DebugWindow:
         self.button_frame = ttk.LabelFrame(self.window, text="디버그 도구")
         self.button_frame.pack(padx=10, pady=5, fill=tk.X)
         
+        # 창 제목 입력 필드 추가
+        self.window_title_frame = ttk.Frame(self.button_frame)
+        self.window_title_frame.pack(fill="x", padx=5, pady=5)
+        
+        ttk.Label(self.window_title_frame, text="창 제목:").pack(side="left", padx=5)
+        self.window_title_entry = ttk.Entry(self.window_title_frame)
+        self.window_title_entry.pack(side="left", padx=5, fill="x", expand=True)
+        self.window_title_entry.insert(0, "FactoryVoca(")  # 기본값 설정
+        
         # 테스트 버튼들
         ttk.Button(self.button_frame, text="창 감지 테스트", 
                   command=self.test_window_detection).pack(side=tk.LEFT, padx=5, pady=5)
@@ -459,11 +556,28 @@ class DebugWindow:
         ttk.Button(test_frame, text="개별 위치 테스트", 
                   command=self.show_position_test_window).pack(side=tk.LEFT, padx=5, pady=5)
         
+        # 모든 창 개수 감지 버튼 추가
+        ttk.Button(self.button_frame, text="모든 창 개수 감지", 
+                  command=self.detect_all_windows).pack(side=tk.LEFT, padx=5, pady=5)
+        
         ttk.Button(self.button_frame, text="로그 지우기", 
                   command=self.clear_log).pack(side=tk.RIGHT, padx=5, pady=5)
         
         self.log("디버그 모드가 활성화되었습니다.")
         
+    def detect_all_windows(self):
+        """모든 창의 개수를 감지하여 로그에 출력"""
+        try:
+            windows = pyautogui.getAllWindows()
+            self.log(f"현재 열려 있는 모든 창의 개수: {len(windows)}")
+            # for i, window in enumerate(windows):
+            #     self.log(f"창 {i + 1}: {window.title}")
+        except Exception as e:
+            self.log(f"창 개수 감지 중 오류 발생: {str(e)}")
+        
+    def get_window_title(self):
+        """입력된 창 제목을 반환 (기본값: FactoryVoca()"""
+        return self.window_title_entry.get().strip() or "FactoryVoca("
 
     def show_position_test_window(self):
         """개별 위치 테스트 창 표시"""
@@ -572,8 +686,9 @@ class DebugWindow:
         """창 감지 테스트"""
         self.log("창 감지 테스트 시작...")
         try:
-            windows = pyautogui.getWindowsWithTitle("FactoryVoca")
-            self.log(f"FactoryVoca 관련 창 개수: {len(windows)}")
+            window_title = self.get_window_title()
+            windows = pyautogui.getWindowsWithTitle(window_title)
+            self.log(f"'{window_title}' 관련 창 개수: {len(windows)}")
             for window in windows:
                 self.log(f"찾은 창: {window.title}")
                 self.log(f"위치: ({window.left}, {window.top})")
@@ -593,31 +708,30 @@ class DebugWindow:
             # 현재 마우스 위치 가져오기
             x, y = pyautogui.position()
             
-            # FactoryVoca 창 찾기
-            windows = pyautogui.getWindowsWithTitle("FactoryVoca")
-            target_window = None
-            for window in windows:
-                if "http://cafe.naver.com/factoryvoca" in window.title:
-                    target_window = window
-                    break
+            # 입력된 창 제목으로 창 찾기
+            window_title = self.get_window_title()
+            windows = pyautogui.getWindowsWithTitle(window_title)
             
-            if target_window:
-                # 상대 좌표 계산
-                rel_x = x - target_window.left
-                rel_y = y - target_window.top
-                
-                self.log("---")
-                self.log(f"창 정보:")
-                self.log(f"- 창 위치: ({target_window.left}, {target_window.top})")
-                self.log(f"- 창 크기: {target_window.width} x {target_window.height}")
-                self.log(f"- 창 제목: {target_window.title}")
-                
-                self.log(f"절대 좌표: ({x}, {y})")
-                self.log(f"창 기준 상대 좌표: ({rel_x}, {rel_y})")
-                
-            else:
-                self.log("FactoryVoca 창을 찾을 수 없습니다.")
-                
+            if not windows:
+                self.log(f"'{window_title}' 제목의 창을 찾을 수 없습니다.")
+                return
+            
+            # 첫 번째 창만 취급
+            target_window = windows[0]
+            
+            # 상대 좌표 계산
+            rel_x = x - target_window.left
+            rel_y = y - target_window.top
+            
+            self.log("---")
+            self.log(f"창 정보:")
+            self.log(f"- 창 위치: ({target_window.left}, {target_window.top})")
+            self.log(f"- 창 크기: {target_window.width} x {target_window.height}")
+            self.log(f"- 창 제목: {target_window.title}")
+            
+            self.log(f"절대 좌표: ({x}, {y})")
+            self.log(f"창 기준 상대 좌표: ({rel_x}, {rel_y})")
+            
         except Exception as e:
             self.log(f"오류 발생: {str(e)}")
 
@@ -626,6 +740,7 @@ class MacroController:
         self.controller = controller
         
         self.auto_answer_save = False
+        self.print_output_path_set = False
 
     def log(self, message):
         """컨트롤러의 로그 기능 사용"""
@@ -635,23 +750,6 @@ class MacroController:
         """디버그 로그 출력"""
         if Config.is_debug_mode():
             self.log(message)
-
-    def find_and_activate_window(self):
-        """정확한 창 제목으로 창을 찾아서 활성화"""
-        try:
-            start_time = time.time()
-            windows = pyautogui.getWindowsWithTitle("FactoryVoca")
-            
-            for window in windows:
-                if window.title == Config.get_window_title():
-                    window.activate()
-                    end_time = time.time()
-                    self.debug_log(f"창 찾기 소요 시간: {end_time - start_time}초")
-                    pyautogui.sleep(0.1)  # 활성화 대기
-                    return window
-        except Exception as e:
-            messagebox.showerror("오류", f"창을 찾는 중 오류가 발생했습니다: {str(e)}")
-            return None
 
     def start_macro(self):
         """매크로 시작"""
@@ -669,9 +767,11 @@ class MacroController:
             self.stop_macro(f"Day 범위에는 숫자만 입력 가능합니다.")
             return
         
+
+
+        
         for day in range(day_start, day_end + 1):
-            if not self.auto_answer_save:
-                self.toggle_auto_answer_save()
+            self.current_day = day
             
             if self.input_values['type'] == WordbookType.ORIGINAL:
                 self.click_selected_day()
@@ -689,7 +789,7 @@ class MacroController:
                 
                 pyautogui.sleep(3)
                 
-                #self.print_wordbook()
+                self.print_wordbook()
                 
             
     def stop_macro(self, e = None):
@@ -699,12 +799,30 @@ class MacroController:
             self.log("원인: " + str(e))
         self.controller.view.on_stop_click()
         pass
+    
+    def find_and_activate_window(self, title: str, title_key: str = "window_title"):
+        """정확한 창 제목으로 창을 찾아서 활성화"""
+        try:
+            start_time = time.time()
+            windows = pyautogui.getWindowsWithTitle(title)
+            
+            for window in windows:
+                if window.title == Config.get_value(title_key):
+                    window.activate()
+                    end_time = time.time()
+                    self.debug_log(f"{window.title} 창 찾기 소요 시간: {end_time - start_time}초")
+                    pyautogui.sleep(0.1)  # 활성화 대기
+                    return window
+        except Exception as e:
+            messagebox.showerror("오류", f"창을 찾는 중 오류가 발생했습니다: {str(e)}")
+            return None
+
         
-    def click_position(self, position_key):
+    def click_position(self, position_key, title = "Factoryvoca", title_key = "window_title"):
         """설정된 위치 클릭"""
         try:
             # 창 찾고 활성화
-            window = self.find_and_activate_window()
+            window = self.find_and_activate_window(title, title_key)
             if not window:
                 return False
                 
@@ -720,7 +838,7 @@ class MacroController:
             
             # 클릭
             pyautogui.click(abs_x, abs_y)
-            pyautogui.sleep(0.5)  # 약간의 딜레이
+            pyautogui.sleep(Config.get_delay('click'))  # 약간의 딜레이
             return True
             
         except Exception as e:
@@ -740,7 +858,7 @@ class MacroController:
             return None
 
     def select_day(self, day_number: int):
-        """특정 Day 선택 (PageDown 활용)"""
+        """특정 Day 선택 (PageDown 및 PageUp 활용)"""
         try:
             # Day 리스트 첫 위치 클릭
             if not self.click_position('day_list.first_day'):
@@ -750,19 +868,39 @@ class MacroController:
             pyautogui.press('home')
             pyautogui.sleep(0.1)
             
-            # PageDown을 사용하여 대략적인 위치로 이동
-            page_size = Config.get_value('page_down_size') # PageDown 한 번에 16개씩 이동 (예: 1 -> 17 -> 33)
-            page_jumps = (day_number - 1) // page_size  # 필요한 PageDown 횟수 계산
+            # PageDown 한 번에 이동하는 Day 수
+            page_size = Config.get_value('page_down_size')  # 예: 16
+        
+            # 전체 페이지 수 계산
+            total_pages = (day_number - 1) // page_size
+            
+            # 현재 페이지의 중간 지점 계산
+            mid_point = page_size // 2
+            
+            # 현재 페이지에서의 위치 계산
+            current_position = (day_number - 1) % page_size
 
-            for _ in range(page_jumps):
-                pyautogui.press('pagedown')
-                pyautogui.sleep(0.1)  # 페이지 이동 후 약간의 딜레이
-
-            # 남은 Day는 아래 화살표로 이동
-            remaining_days = (day_number - 1) % page_size
-            for _ in range(remaining_days):
-                pyautogui.press('down')
-                pyautogui.sleep(0.1)
+            if current_position > mid_point:
+                # Page Down을 사용하여 다음 페이지로 이동
+                for _ in range(total_pages + 1):
+                    pyautogui.press('pagedown')
+                    pyautogui.sleep(pyautogui.sleep(Config.get_delay('page_down')))
+                
+                # 남은 Day는 위 화살표로 이동
+                remaining_days = page_size - current_position
+                for _ in range(remaining_days):
+                    pyautogui.press('up')
+                    pyautogui.sleep(Config.get_delay('arrow_key'))
+            else:
+                # Page Down을 사용하여 대략적인 위치로 이동
+                for _ in range(total_pages):
+                    pyautogui.press('pagedown')
+                    pyautogui.sleep(pyautogui.sleep(Config.get_delay('page_down')))
+                
+                # 남은 Day는 아래 화살표로 이동
+                for _ in range(current_position):
+                    pyautogui.press('down')
+                    pyautogui.sleep(Config.get_delay('arrow_key'))
 
             return True
             
@@ -795,7 +933,7 @@ class MacroController:
         except Exception as e:
             self.log(f"영한 비율 설정 중 오류 발생: {str(e)}")
             return False
-
+        
     def toggle_auto_answer_save(self):
         """자동 저장 토글"""
         self.auto_answer_save = not self.auto_answer_save
@@ -816,7 +954,10 @@ class MacroController:
 
     def load_day(self):
         """Day 불러오기"""
-        return self.click_position('buttons.load_day')
+        if not self.click_position('buttons.load_day'):
+            return False
+        pyautogui.sleep(Config.get_delay('load_day'))  # Day 불러오기 딜레이
+        return True
 
     def apply_settings(self):
         """설정 적용"""
@@ -832,7 +973,83 @@ class MacroController:
 
     def print_wordbook(self):
         """단어장 출력"""
-        return self.click_position('buttons.print')
+        if not self.auto_answer_save:
+            self.toggle_auto_answer_save()
+        
+        start_window_count = len(pyautogui.getAllWindows())
+        self.debug_log(f"출력 전 창 개수: {start_window_count}")
+        
+        if not self.click_position('buttons.print'): # 출력 버튼 누르기
+            return False
+        
+        
+        
+        pyautogui.sleep(Config.get_delay('print_btn'))  # 단어장 출력버튼 딜레이
+        
+        if not self.print_output_path_set:
+            self.set_print_output_path()
+        
+        self.debug_log(f"출력 버튼 누른 후 창 개수: {len(pyautogui.getAllWindows())}")
+            # 파일이름 입력
+        pyperclip.copy(self.get_filename())
+        pyautogui.hotkey('ctrl', 'v')  # 파일이름 입력
+
+
+        pyautogui.sleep(Config.get_delay('input_filename'))  # 파일이름 입력 딜레이
+        pyautogui.press('enter')  # 엔터로 출력 시작
+        
+    
+        pyautogui.sleep(Config.get_delay('print_duration'))  # 단어장 출력 완료까지 딜레이
+        
+        while True:
+            self.debug_log(f"현재 창 개수: {len(pyautogui.getAllWindows())}")
+            if len(pyautogui.getAllWindows()) <= start_window_count:
+                break
+            pyautogui.sleep(0.5)
+            time.sleep(0.5)
+        # 단어장 출력 딜레이
+        return True
+    
+    def get_filename(self):
+        """파일이름을 생성"""
+        filename = f"{self.input_values['name']}"
+        
+        if self.input_values['type'] == WordbookType.ORIGINAL:
+            filename += f" {WordbookType.ORIGINAL.value}"
+        elif self.input_values['type'] == WordbookType.RANDOM:
+            filename += f" {WordbookType.RANDOM.value}"
+        else:
+            filename += f" {WordbookType.ENG_KOR_RANDOM.value}"
+        
+        if self.input_values['type'] != WordbookType.ORIGINAL and self.input_values['version']:
+            filename += f"ver{self.input_values['version']}"
+            
+        filename += f" Day {self.current_day}"
+                
+        return re.sub(r'[\\/:*?"<>|]', '_', filename)
+        
+    
+    def set_print_output_path(self):
+        """출력 경로 설정"""
+        try:
+            # 출력 경로 설정 버튼 클릭
+            if not self.click_position('buttons.set_output_path', Config.get_value('print_title'), "print_title"):
+                return False
+            
+            # 경로 입력
+            pyautogui.write(os.path.join(os.getcwd(), "work"))
+            pyautogui.sleep(Config.get_delay('output_path'))  # 출력 경로 입력 딜레이
+            pyautogui.press('enter')
+            
+            if not self.click_position('inputs.input_filename', Config.get_value('print_title'), "print_title"):
+                return False
+            
+            self.print_output_path_set = True
+            return True
+            
+        except Exception as e:
+            self.log(f"출력 경로 설정 중 오류 발생: {str(e)}")
+            return False
 
 class Config:
     # 클래스 변수로 설정
@@ -882,6 +1099,11 @@ class Config:
     def get_value(cls, key):
         """key에 해당하는 값 반환"""
         return cls._config.get(key)
+    
+    @classmethod
+    def get_delay(cls, key):
+        """key에 해당하는 딜레이 값을 반환"""
+        return cls._config['delays'].get(key, cls._config['delays']['default'])
 
     @classmethod
     def get_position(cls, position_key):
@@ -909,11 +1131,6 @@ class Config:
         
         collect_positions(cls._config['ui_positions'])
         return positions
-
-    @classmethod
-    def get_window_title(cls):
-        """창 제목 반환"""
-        return cls._config.get('window_title')
 
     @classmethod
     def is_debug_mode(cls) -> bool:
