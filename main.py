@@ -3,10 +3,11 @@ from tkinter import ttk, scrolledtext
 import tkinter.messagebox as messagebox
 from datetime import datetime
 from enum import Enum, auto
+from PyPDF2 import PdfMerger
 import pyautogui, json, time, os, shutil, re, pyperclip
 
 class WordbookType(Enum):
-    ORIGINAL = "원래 순서"
+    ORIGINAL = "원래순서"
     RANDOM = "랜덤"
     ENG_KOR_RANDOM = "영한랜덤"
     
@@ -36,6 +37,7 @@ class Controller:
         self.debug_window = DebugWindow(self) if Config.is_debug_mode() else None            
         self.view = AppUI(root, self)
         self.macro = MacroController(self)
+        self.pdf_manager = PDFManager(self)
         
         print("Controller initialized.")
         
@@ -512,8 +514,84 @@ class AppUI:
         self.log("작업 중단")
 
 class PDFManager:
-    def __init__(self, controller: Controller):
+    def __init__(self, controller):
         self.controller = controller
+
+    def merge_pdfs(self, input_folder, output_path, sort_by_time=False):
+        """PDF 파일들을 합치는 메서드"""
+        merger = PdfMerger()
+        pdf_files = []
+
+        # 폴더 내의 모든 PDF 파일을 찾기
+        for filename in os.listdir(input_folder):
+            if filename.endswith(".pdf"):
+                pdf_files.append(filename)
+
+        # 파일 정렬
+        if sort_by_time:
+            # 시간 순서대로 정렬 (파일 이름에 시간 정보가 포함되어 있다고 가정)
+            pdf_files.sort(key=lambda x: datetime.strptime(x.split('_')[2].split('.')[0], "%H%M%S"))
+        else:
+            # Day 순서대로 정렬 (파일 이름에 Day 정보가 포함되어 있다고 가정)
+            pdf_files.sort(key=lambda x: int(x.split('Day ')[1].split('.')[0]))
+
+        # PDF 파일들을 합치기
+        for pdf_file in pdf_files:
+            pdf_path = os.path.join(input_folder, pdf_file)
+            merger.append(pdf_path)
+
+        # 합쳐진 PDF 파일 저장
+        merger.write(output_path)
+        merger.close()
+
+    def merge_work_pdfs(self):
+        """work 폴더의 PDF 파일들을 Day 순서대로 합치기"""
+        work_folder = self.controller.directories["Work"]
+        output_folder = self.controller.directories["Output"]
+        output_filename = f"{self.controller.macro.get_filename()} 시험지.pdf"
+        output_path = os.path.join(output_folder, output_filename)
+
+        self.merge_pdfs(work_folder, output_path, sort_by_time=False)
+        self.controller.log(f"시험지 PDF 파일이 합쳐져 저장되었습니다: {output_path}")
+
+    def merge_answer_pdfs(self):
+        """정답 폴더의 PDF 파일들을 시간 순서대로 합치기"""
+        answer_folder = self.controller.directories["Answer"]
+        output_folder = self.controller.directories["Output"]
+        output_filename = f"{self.controller.macro.get_filename()} 답지.pdf"
+        output_path = os.path.join(output_folder, output_filename)
+
+        self.merge_pdfs(answer_folder, output_path, sort_by_time=True)
+        self.controller.log(f"답지 PDF 파일이 합쳐져 저장되었습니다: {output_path}")
+
+    def cleanup_folders(self):
+        """work 폴더와 정답 폴더를 정리하는 메서드"""
+        work_folder = self.controller.directories["Work"]
+        answer_folder = self.controller.directories["Answer"]
+
+        # work 폴더 정리
+        for filename in os.listdir(work_folder):
+            file_path = os.path.join(work_folder, filename)
+            try:
+                if os.path.isfile(file_path) or os.path.islink(file_path):
+                    os.unlink(file_path)
+                elif os.path.isdir(file_path):
+                    shutil.rmtree(file_path)
+            except Exception as e:
+                self.controller.log(f"파일 삭제 중 오류 발생: {file_path} - {str(e)}")
+
+        # 정답 폴더 정리
+        for filename in os.listdir(answer_folder):
+            file_path = os.path.join(answer_folder, filename)
+            try:
+                if os.path.isfile(file_path) or os.path.islink(file_path):
+                    os.unlink(file_path)
+                elif os.path.isdir(file_path):
+                    shutil.rmtree(file_path)
+            except Exception as e:
+                self.controller.log(f"파일 삭제 중 오류 발생: {file_path} - {str(e)}")
+
+        self.controller.log("work 폴더와 정답 폴더가 정리되었습니다.")
 
 # 매크로 클래스
 class DebugWindow:
@@ -772,10 +850,7 @@ class MacroController:
             messagebox.showerror("치명적인 오류", "Day 범위에는 숫자만 입력 가능합니다.")
             self.stop_macro(f"Day 범위에는 숫자만 입력 가능합니다.")
             return
-        
-
-
-        
+                
         for day in range(day_start, day_end + 1):
             self.current_day = day
             
@@ -797,6 +872,9 @@ class MacroController:
                 
                 self.print_wordbook()
                 
+        self.controller.pdf_manager.merge_work_pdfs()
+        self.controller.pdf_manager.merge_answer_pdfs()
+        self.controller.pdf_manager.cleanup_folders()
             
     def stop_macro(self, e = None):
         """매크로 중단 (에러 등)"""
@@ -997,7 +1075,7 @@ class MacroController:
         
         self.debug_log(f"출력 버튼 누른 후 창 개수: {len(pyautogui.getAllWindows())}")
             # 파일이름 입력
-        pyperclip.copy(self.get_filename())
+        pyperclip.copy(self.get_filename(self.current_day))
         pyautogui.hotkey('ctrl', 'v')  # 파일이름 입력
         self.log(f"파일이름 입력: {self.get_filename()}")
 
@@ -1017,7 +1095,7 @@ class MacroController:
         # 단어장 출력 딜레이
         return True
     
-    def get_filename(self):
+    def get_filename(self, day = None):
         """파일이름을 생성"""
         filename = f"{self.input_values['name']}"
         
@@ -1031,7 +1109,8 @@ class MacroController:
         if self.input_values['type'] != WordbookType.ORIGINAL and self.input_values['version']:
             filename += f"ver{self.input_values['version']}"
             
-        filename += f" Day {self.current_day}"
+        if day:
+            filename += f" Day {self.current_day}"
                 
         return re.sub(r'[\\/:*?"<>|]', '_', filename)
         
