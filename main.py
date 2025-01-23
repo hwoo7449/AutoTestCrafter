@@ -30,17 +30,15 @@ class ProgramState(Enum):
 
 # 컨트롤러 클래스
 class Controller:
-    def __init__(self, view: 'AppUI'):
-        self.view = view  # AppUI 인스턴스 저장
+    def __init__(self, root: tk.Tk):
         self.state = ProgramState.IDLE
-        # 매크로 컨트롤러 초기화
-        self.macro = MacroController()
+        
+        # 자식 컴포넌트 초기화
+        self.debug_window = DebugWindow(self) if Config.is_debug_mode() else None            
+        self.view = AppUI(root, self)
+        self.macro = MacroController(self)
         
         print("Controller initialized.")
-        
-        # 디버그 모드가 활성화되어 있다면 로그 출력
-        if self.macro.debug_mode:
-            self.macro.log("디버그 모드가 활성화되었습니다.")
         
         # 컨트롤러에서 관리할 데이터나 기능 초기화
         self.directories = {
@@ -48,22 +46,28 @@ class Controller:
             "Output": "/output",
         }
 
-    def process_action(self):
-        if not self.view.validate_inputs():
-            return
+    def log(self, message):
+        """로그 메시지를 출력"""
+        print(message)  # 항상 콘솔에 출력
+        if self.debug_window:  # 디버그 모드일 경우 디버그 콘솔에도 출력
+            self.debug_window.log(message)
+
+    # def process_action(self):
+    #     if not self.view.validate_inputs():
+    #         return
             
-        input_values = self.view.get_input_values()
+    #     input_values = self.view.get_input_values()
         
-        # Enum을 사용한 타입 비교
-        if input_values['type'] == WordbookType.ORIGINAL:
-            # 원래 순서로 처리
-            pass
-        elif input_values['type'] == WordbookType.RANDOM:
-            # 랜덤으로 처리
-            pass
-        elif input_values['type'] == WordbookType.ENG_KOR_RANDOM:
-            # 영한랜덤으로 처리
-            pass
+    #     # Enum을 사용한 타입 비교
+    #     if input_values['type'] == WordbookType.ORIGINAL:
+    #         # 원래 순서로 처리
+    #         pass
+    #     elif input_values['type'] == WordbookType.RANDOM:
+    #         # 랜덤으로 처리
+    #         pass
+    #     elif input_values['type'] == WordbookType.ENG_KOR_RANDOM:
+    #         # 영한랜덤으로 처리
+    #         pass
 
     def set_state(self, new_state: ProgramState):
         """상태 변경 및 UI 업데이트"""
@@ -198,7 +202,7 @@ class AppUI:
         
         # 체크리스트 항목들
         checklist_items = [
-            "첫페이지 제목(랜덤ver1) 설정하기",
+            "첫페이지 제목(ex. 랜덤ver1) 설정하기",
             "기본 프린터 PDF로 설정하기",
             "추가기능 -> 날짜 설정에서 빈칸으로 설정하기",
             "엑셀 인쇄 페이지 크기 맞추기",
@@ -225,21 +229,7 @@ class AppUI:
             checkbox.pack(anchor="w", padx=10, pady=2)
             self.checkboxes[item] = checkbox
 
-        # 체크박스 상태 확인용 메서드 추가
-        def get_checklist_status(self):
-            """체크리스트 상태를 딕셔너리로 반환"""
-            return {item: var.get() for item, var in self.checkbox_vars.items()}
-
-        def validate_checklist(self):
-            """모든 항목이 체크되었는지 확인"""
-            unchecked = [item for item, var in self.checkbox_vars.items() if not var.get()]
-            if unchecked:
-                messagebox.showwarning(
-                    "미완료 항목",
-                    "다음 항목들이 체크되지 않았습니다:\n\n" + "\n".join(f"- {item}" for item in unchecked)
-                )
-                return False
-            return True
+        
 
         # 버튼 프레임
         self.button_frame = ttk.LabelFrame(self.root, text="제어")
@@ -345,6 +335,21 @@ class AppUI:
         
         return True
 
+    def get_checklist_status(self):
+            """체크리스트 상태를 딕셔너리로 반환"""
+            return {item: var.get() for item, var in self.checkbox_vars.items()}
+
+    def validate_checklist(self):
+        """모든 항목이 체크되었는지 확인"""
+        unchecked = [item for item, var in self.checkbox_vars.items() if not var.get()]
+        if unchecked:
+            messagebox.showwarning(
+                "미완료 항목",
+                "다음 항목들이 체크되지 않았습니다:\n\n" + "\n".join(f"- {item}" for item in unchecked)
+            )
+            return False
+        return True
+
     def get_validated_values(self):
         """편의 메서드: 검증된 값 반환"""
         if not self.validate_inputs():
@@ -353,8 +358,17 @@ class AppUI:
 
     def on_start_click(self):
         """시작 버튼 클릭 시 실행될 메서드"""
+        
+        # 데이터 값 검증
+        if not self.validate_inputs():
+            return
+        
+        # 확인사항 검증
+        if not self.validate_checklist():
+            return
+        
         self.controller.set_state(ProgramState.RUNNING)
-        # TODO: 실제 시작 로직 구현
+        self.controller.macro.start_macro()
         print("작업 시작")
 
     def on_pause_click(self):
@@ -371,7 +385,9 @@ class AppUI:
 
 # 매크로 클래스
 class DebugWindow:
-    def __init__(self):
+    def __init__(self, controller: Controller):
+        self.controller = controller
+        
         self.window = tk.Toplevel()
         self.window.title("Debug Console")
         self.window.geometry("600x400")
@@ -407,6 +423,9 @@ class DebugWindow:
         
         ttk.Button(self.button_frame, text="로그 지우기", 
                   command=self.clear_log).pack(side=tk.RIGHT, padx=5, pady=5)
+        
+        self.log("디버그 모드가 활성화되었습니다.")
+        
 
     def show_position_test_window(self):
         """개별 위치 테스트 창 표시"""
@@ -448,9 +467,9 @@ class DebugWindow:
         """config에서 모든 위치 정보 가져오기"""
         return Config.get_all_positions()
 
-    def test_single_position(self, position_name, move_only=True):
+    def test_single_position(self, position_key, move_only=True):
         """단일 위치 테스트"""
-        self.log(f"테스트 위치: {position_name}")
+        self.log(f"테스트 위치: {position_key}")
         
         try:
             # 창 찾기
@@ -466,9 +485,9 @@ class DebugWindow:
                 return
                 
             # 좌표 가져오기
-            coords = Config.get_position(position_name)
+            coords = Config.get_position(position_key)
             if not coords:
-                self.log(f"좌표를 찾을 수 없습니다: {position_name}")
+                self.log(f"좌표를 찾을 수 없습니다: {position_key}")
                 return
             
             abs_x = target_window.left + coords[0]
@@ -476,10 +495,10 @@ class DebugWindow:
             
             if move_only:
                 pyautogui.moveTo(abs_x, abs_y)
-                self.log(f"이동 완료: {position_name} ({coords[0]}, {coords[1]})")
+                self.log(f"이동 완료: {position_key} ({coords[0]}, {coords[1]})")
             else:
                 pyautogui.click(abs_x, abs_y)
-                self.log(f"클릭 완료: {position_name} ({coords[0]}, {coords[1]})")
+                self.log(f"클릭 완료: {position_key} ({coords[0]}, {coords[1]})")
                 
         except Exception as e:
             self.log(f"테스트 중 오류 발생: {str(e)}")
@@ -492,8 +511,8 @@ class DebugWindow:
         
         def test_next_position(index):
             if index < len(positions):
-                position_name = positions[index]
-                self.test_single_position(position_name, move_only)
+                position_key = positions[index]
+                self.test_single_position(position_key, move_only)
                 self.window.after(1000, test_next_position, index + 1)
             else:
                 self.log("전체 위치 테스트 완료")
@@ -501,9 +520,9 @@ class DebugWindow:
         test_next_position(0)
 
     def log(self, message):
-        """로그 메시지 추가"""
+        """로그 메시지를 콘솔과 디버그 콘솔에 출력"""
         self.log_area.insert(tk.END, f"{message}\n")
-        self.log_area.see(tk.END)  # 자동 스크롤
+        self.log_area.see(tk.END)  # 자동 스크롤# 자동 스크롤
 
     def clear_log(self):
         """로그 지우기"""
@@ -563,125 +582,31 @@ class DebugWindow:
             self.log(f"오류 발생: {str(e)}")
 
 class MacroController:
-    def __init__(self):
-        # 기본 설정값 정의
-        self.default_config = {
-            'window_title': "FactoryVoca(http://cafe.naver.com/factoryvoca)",
-            'debug': False,
-            'ui_positions': {
-                'day_list': {
-                    'first_day': [50, 150]
-                },
-                'selected_day': {
-                    'position': [400, 150]
-                },
-                'buttons': {
-                    'add_day': [450, 200],
-                    'remove_day': [450, 230],
-                    'load_day': [450, 260],
-                    'apply': [800, 300],
-                    'random_apply': [800, 330],
-                    'print': [800, 360]
-                },
-                'inputs': {
-                    'word_count': [700, 150],
-                    'eng_to_kor': [700, 200]
-                },
-                'checkboxes': {
-                    'show_first_letter': [700, 250]
-                }
-            }
-        }
-        
-        # 설정 로드
-        self.config = self.load_config()
-        
-        # 설정값 가져오기 (없으면 기본값 사용)
-        self.window_title = self.config.get('window_title', self.default_config['window_title'])
-        self.debug_mode = self.config.get('debug', self.default_config['debug'])
-        self.debug_window = None
-        
-        if self.debug_mode:
-            self.debug_window = DebugWindow()
-            
-    def log(self, message):
-        """디버그 로그 출력"""
-        if self.debug_mode and self.debug_window:
-            self.debug_window.log(message)
+    def __init__(self, controller: Controller):
+        self.controller = controller
 
-    def load_config(self):
-        """config.json 파일에서 설정 로드"""
-        config_path = 'config.json'
-        
-        try:
-            if os.path.exists(config_path):
-                with open(config_path, 'r', encoding='utf-8') as f:
-                    return json.load(f)
-            else:
-                # config 파일이 없으면 기본값으로 생성
-                with open(config_path, 'w', encoding='utf-8') as f:
-                    json.dump(self.default_config, f, indent=4, ensure_ascii=False)
-                return self.default_config
-                
-        except Exception as e:
-            messagebox.showerror("설정 로드 오류", f"설정 파일을 로드하는 중 오류가 발생했습니다: {str(e)}")
-            return self.default_config
-            
+    def log(self, message):
+        """컨트롤러의 로그 기능 사용"""
+        self.controller.log(message)
+
     def find_and_activate_window(self):
         """정확한 창 제목으로 창을 찾아서 활성화"""
         try:
             windows = pyautogui.getWindowsWithTitle("FactoryVoca")
-            target_window = None
             
             for window in windows:
-                if window.title == self.window_title:
-                    target_window = window
-                    break
-                    
-            if target_window:
-                target_window.activate()
-                pyautogui.sleep(0.5)  # 활성화 대기
-                return target_window
-            else:
-                messagebox.showerror("오류", f"창을 찾을 수 없습니다: {self.window_title}")
-                return None
+                if window.title == Config.get_window_title():
+                    window.activate()
+                    pyautogui.sleep(0.5)  # 활성화 대기
+                    return window
                 
         except Exception as e:
             messagebox.showerror("오류", f"창을 찾는 중 오류가 발생했습니다: {str(e)}")
             return None
-            
-    def select_days(self, start_day: int, end_day: int):
-        """지정된 범위의 Day들을 선택"""
-        if not self.find_and_activate_window():
-            return False
-            
-        try:
-            # Day 리스트가 있는 영역의 좌표를 찾음
-            # 이미지 인식을 사용하여 리스트 영역 찾기
-            list_region = pyautogui.locateOnScreen('day_list.png', confidence=0.9)
-            if not list_region:
-                messagebox.showerror("오류", "Day 리스트를 찾을 수 없습니다.")
-                return False
-                
-            # 첫 번째 Day 항목의 체크박스 위치 찾기
-            checkbox_x = list_region.left + 20  # 체크박스는 리스트의 왼쪽에 있음
-            first_item_y = list_region.top + 25  # 첫 번째 항목의 y 좌표
-            item_height = 20  # 각 항목의 높이
-            
-            # 원하는 Day 범위만큼 체크박스 클릭
-            for day in range(start_day, end_day + 1):
-                # Day 항목의 y 좌표 계산
-                item_y = first_item_y + (day - 1) * item_height
-                
-                # 체크박스 클릭
-                pyautogui.click(checkbox_x, item_y)
-                pyautogui.sleep(0.1)  # 약간의 딜레이
-                
-            return True
-            
-        except Exception as e:
-            messagebox.showerror("오류", f"Day 선택 중 오류 발생: {str(e)}")
-            return False
+
+    def start_macro(self):
+        """매크로 시작"""
+        pass
 
     def click_position(self, position_key):
         """설정된 위치 클릭"""
@@ -715,7 +640,7 @@ class MacroController:
         try:
             # 키를 점(.)으로 분리하여 딕셔너리 탐색
             keys = position_key.split('.')
-            value = self.config['ui_positions']
+            value = Config._config['ui_positions']
             for key in keys:
                 value = value[key]
             return value
@@ -879,16 +804,10 @@ class Config:
         """디버그 모드 여부 반환"""
         return cls._config.get('debug', True)
 
-
 # 메인 코드 실행
 if __name__ == "__main__":
     root = tk.Tk()  # Tkinter 메인 윈도우 생성
     Config.load()  # 설정 파일 로드
-    
-    if Config.is_debug_mode():
-        debug_window = DebugWindow()
-    
-    controller = Controller(None)  # 컨트롤러 인스턴스 생성
-    app = AppUI(root, controller)  # UI 클래스 생성 및 연결
-    controller.view = app  # 컨트롤러에 UI 인스턴스 연결
+        
+    controller = Controller(root)  # 컨트롤러 인스턴스 생성 UI 클래스 생성 및 연결
     root.mainloop()  # Tkinter 이벤트 루프 실행
