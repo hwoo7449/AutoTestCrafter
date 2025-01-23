@@ -1,7 +1,6 @@
 import tkinter as tk
 from tkinter import ttk, scrolledtext
 import tkinter.messagebox as messagebox
-import pygetwindow as gw
 from datetime import datetime
 from enum import Enum, auto
 import pyautogui, json, time, os, shutil, re, pyperclip
@@ -44,8 +43,8 @@ class Controller:
         
         # 컨트롤러에서 관리할 데이터나 기능 초기화
         self.directories = {
-            "Work": "/work",
-            "Output": "/output",
+            "Work": "work",
+            "Output": "output",
             "Answer": os.path.join(appdata_path, 'FactoryVoca Pro', '정답')
         }
                 
@@ -64,6 +63,7 @@ class Controller:
                 
     def delete_work_contents(self):
         """작업 폴더 내의 모든 내용물을 삭제 (폴더는 유지)"""
+        self.debug_log(f"작업 폴더 경로: {self.directories['Work']}")
         if not os.path.exists(self.directories['Work']):
             self.log(f"작업 폴더가 존재하지 않습니다: {self.directories['Work']}")
             return
@@ -98,6 +98,7 @@ class Controller:
                 
     def delete_answer_sheet_contents(self):
         """정답지 폴더 내의 모든 내용물을 삭제 (폴더는 유지)"""
+        self.debug_log(f"작업 폴더 경로: {self.directories['Answer']}")
         if not os.path.exists(self.directories['Answer']):
             self.log(f"정답지 폴더가 존재하지 않습니다: {self.directories['Answer']}")
             return
@@ -137,6 +138,11 @@ class Controller:
         print(log_message)  # 항상 콘솔에 출력
         if self.debug_window:  # 디버그 모드일 경우 디버그 콘솔에도 출력
             self.debug_window.log(message)
+            
+    def debug_log(self, message):
+        """디버그 로그 출력"""
+        if Config.is_debug_mode():
+            self.log(message)
 
     # def process_action(self):
     #     if not self.view.validate_inputs():
@@ -981,7 +987,7 @@ class MacroController:
         
         if not self.click_position('buttons.print'): # 출력 버튼 누르기
             return False
-        
+        self.log("출력 버튼 클릭")
         
         
         pyautogui.sleep(Config.get_delay('print_btn'))  # 단어장 출력버튼 딜레이
@@ -993,6 +999,7 @@ class MacroController:
             # 파일이름 입력
         pyperclip.copy(self.get_filename())
         pyautogui.hotkey('ctrl', 'v')  # 파일이름 입력
+        self.log(f"파일이름 입력: {self.get_filename()}")
 
 
         pyautogui.sleep(Config.get_delay('input_filename'))  # 파일이름 입력 딜레이
