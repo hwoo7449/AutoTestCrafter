@@ -1,7 +1,10 @@
 import tkinter as tk
-from tkinter import ttk
+from tkinter import ttk, scrolledtext
 import tkinter.messagebox as messagebox
 from enum import Enum, auto
+import pyautogui
+import json
+import os
 
 class WordbookType(Enum):
     ORIGINAL = "원래 순서"
@@ -19,21 +22,31 @@ class WordbookType(Enum):
                 return type
         raise ValueError(f"Invalid type value: {value}")
 
+# 기존의 WordbookType Enum 아래에 추가
+class ProgramState(Enum):
+    IDLE = auto()      # 초기 상태 또는 중단 후
+    RUNNING = auto()   # 실행 중
+    PAUSED = auto()    # 일시정지
+
 # 컨트롤러 클래스
 class Controller:
     def __init__(self, view: 'AppUI'):
         self.view = view  # AppUI 인스턴스 저장
-        # 컨트롤러에서 관리할 데이터나 기능 초기화
-        self.directories = {
-            "Work": "/Work",
-            "Output": "/Output",
-        }
+        self.state = ProgramState.IDLE
+        # 매크로 컨트롤러 초기화
+        self.macro = MacroController()
         
         print("Controller initialized.")
-
-    def example_action(self):
-        # 예제 동작 (버튼 클릭 시 실행)
-        print("Example action executed!")
+        
+        # 디버그 모드가 활성화되어 있다면 로그 출력
+        if self.macro.debug_mode:
+            self.macro.log("디버그 모드가 활성화되었습니다.")
+        
+        # 컨트롤러에서 관리할 데이터나 기능 초기화
+        self.directories = {
+            "Work": "/work",
+            "Output": "/output",
+        }
 
     def process_action(self):
         if not self.view.validate_inputs():
@@ -52,6 +65,39 @@ class Controller:
             # 영한랜덤으로 처리
             pass
 
+    def set_state(self, new_state: ProgramState):
+        """상태 변경 및 UI 업데이트"""
+        self.state = new_state
+        self.update_ui_for_state()
+
+    def update_ui_for_state(self):
+        """현재 상태에 따라 UI 업데이트"""
+        if not self.view:
+            return
+            
+        if self.state == ProgramState.IDLE:
+            self.view.buttons['start'].configure(state='normal')
+            self.view.buttons['pause'].configure(state='disabled')
+            self.view.buttons['stop'].configure(state='disabled')
+            
+        elif self.state == ProgramState.RUNNING:
+            self.view.buttons['start'].configure(state='disabled')
+            self.view.buttons['pause'].configure(state='normal')
+            self.view.buttons['stop'].configure(state='normal')
+            
+        elif self.state == ProgramState.PAUSED:
+            self.view.buttons['start'].configure(state='normal')
+            self.view.buttons['pause'].configure(state='disabled')
+            self.view.buttons['stop'].configure(state='normal')
+
+        # 상태 레이블 업데이트
+        status_texts = {
+            ProgramState.IDLE: "상태: 대기 중",
+            ProgramState.RUNNING: "상태: 실행 중",
+            ProgramState.PAUSED: "상태: 일시정지"
+        }
+        self.view.status_label.configure(text=status_texts[self.state])
+
 # UI 클래스
 class AppUI:
     def __init__(self, root: tk.Tk, controller: Controller):
@@ -59,7 +105,7 @@ class AppUI:
         self.controller = controller
 
         self.root.title("AutoTestCrafter")  # 창 제목
-        self.root.geometry("400x300")    # 창 크기 설정 (너비 x 높이)
+        self.root.geometry("400x500")    # 창 크기 설정 (너비 x 높이)
 
         # UI 요소 구성
         self.create_widgets()
@@ -121,24 +167,182 @@ class AppUI:
         vcmd = (self.root.register(validate_number), '%P')
         self.inputs['version'].configure(validate="key", validatecommand=vcmd)
 
+        # Day 범위 입력 (숫자만)
+        day_frame = ttk.Frame(self.input_frame)
+        day_frame.pack(fill="x", pady=5)
+        ttk.Label(day_frame, text="범위: Day").pack(side="left")
+        
+        # 시작 Day 입력
+        self.inputs['day_start'] = ttk.Entry(day_frame, width=5)
+        self.inputs['day_start'].pack(side="left", padx=2)
+        self.inputs['day_start'].insert(0, "1")  # 기본값 1 설정
+        
+        ttk.Label(day_frame, text="~").pack(side="left", padx=2)
+        
+        ttk.Label(day_frame, text="Day").pack(side="left")
+        
+        # 끝 Day 입력
+        self.inputs['day_end'] = ttk.Entry(day_frame, width=5)
+        self.inputs['day_end'].pack(side="left", padx=2)
+        
+        # Day 입력 필드들에 숫자 검증 적용
+        self.inputs['day_start'].configure(validate="key", validatecommand=vcmd)
+        self.inputs['day_end'].configure(validate="key", validatecommand=vcmd)
+
+        # 수동 체크리스트 프레임
+        self.checklist_frame = ttk.LabelFrame(self.root, text="확인사항")
+        self.checklist_frame.pack(pady=10, padx=20, fill="x")
+
+        # 체크박스들을 저장할 딕셔너리
+        self.checkboxes = {}
+        
+        # 체크리스트 항목들
+        checklist_items = [
+            "첫페이지 제목(랜덤ver1) 설정하기",
+            "기본 프린터 PDF로 설정하기",
+            "추가기능 -> 날짜 설정에서 빈칸으로 설정하기",
+            "엑셀 인쇄 페이지 크기 맞추기",
+            "단어장 검색해서 설정하기",
+            "\'첫단어에 유닛이름 표시\' 체크 해제하기"
+        ]
+        
+        # 체크박스 변수들을 저장할 딕셔너리
+        self.checkbox_vars = {}
+        
+        # 체크박스 생성
+        for item in checklist_items:
+            # 각 체크박스의 상태를 저장할 변수
+            self.checkbox_vars[item] = tk.BooleanVar()
+            
+            # 체크박스 생성
+            checkbox = ttk.Checkbutton(
+                self.checklist_frame,
+                text=item,
+                variable=self.checkbox_vars[item],
+                onvalue=True,
+                offvalue=False
+            )
+            checkbox.pack(anchor="w", padx=10, pady=2)
+            self.checkboxes[item] = checkbox
+
+        # 체크박스 상태 확인용 메서드 추가
+        def get_checklist_status(self):
+            """체크리스트 상태를 딕셔너리로 반환"""
+            return {item: var.get() for item, var in self.checkbox_vars.items()}
+
+        def validate_checklist(self):
+            """모든 항목이 체크되었는지 확인"""
+            unchecked = [item for item, var in self.checkbox_vars.items() if not var.get()]
+            if unchecked:
+                messagebox.showwarning(
+                    "미완료 항목",
+                    "다음 항목들이 체크되지 않았습니다:\n\n" + "\n".join(f"- {item}" for item in unchecked)
+                )
+                return False
+            return True
+
+        # 버튼 프레임
+        self.button_frame = ttk.LabelFrame(self.root, text="제어")
+        self.button_frame.pack(pady=10, padx=20, fill="x")
+
+        # 버튼들을 담을 딕셔너리
+        self.buttons = {}
+        
+        # 버튼 생성
+        button_configs = [
+            {
+                'name': 'start',
+                'text': '시작',
+                'command': self.on_start_click,
+                'width': 10
+            },
+            {
+                'name': 'pause',
+                'text': '일시정지',
+                'command': self.on_pause_click,
+                'width': 10
+            },
+            {
+                'name': 'stop',
+                'text': '중단',
+                'command': self.on_stop_click,
+                'width': 10
+            },
+            {
+                'name': 'exit',
+                'text': '종료',
+                'command': self.root.quit,
+                'width': 10
+            }
+        ]
+        
+        # 버튼 프레임 내부에 버튼들을 담을 하위 프레임
+        button_container = ttk.Frame(self.button_frame)
+        button_container.pack(pady=5, padx=5)
+        
+        # 버튼 생성 및 배치
+        for config in button_configs:
+            btn = ttk.Button(
+                button_container,
+                text=config['text'],
+                command=config['command'],
+                width=config['width']
+            )
+            btn.pack(side='left', padx=5)
+            self.buttons[config['name']] = btn
+        
+        # 초기 버튼 상태 설정
+        self.buttons['pause'].configure(state='disabled')
+        self.buttons['stop'].configure(state='disabled')
+
+        # 상태 표시 레이블
+        self.status_label = ttk.Label(self.root, text="상태: 대기 중")
+        self.status_label.pack(pady=5)
+
     def get_input_values(self):
         """순수 입력값만 반환"""
         values = {
             'name': self.inputs['name'].get().strip(),
             'type': WordbookType.from_string(self.inputs['type'].get()),
-            'version': self.inputs['version'].get().strip() if WordbookType.from_string(self.inputs['type'].get()) != WordbookType.ORIGINAL else None
+            'version': self.inputs['version'].get().strip() if WordbookType.from_string(self.inputs['type'].get()) != WordbookType.ORIGINAL else None,
+            'day_start': self.inputs['day_start'].get().strip(),
+            'day_end': self.inputs['day_end'].get().strip()
         }
         return values
 
     def validate_inputs(self):
         """검증 로직"""
         values = self.get_input_values()
+        
         if not values['name']:
             messagebox.showerror("오류", "단어장 이름을 입력해주세요.")
             return False
+        
         if values['type'] != WordbookType.ORIGINAL and not values['version']:
             messagebox.showerror("오류", "버전을 입력해주세요.")
             return False
+        
+        # Day 범위 검증
+        if not values['day_start'] or not values['day_end']:
+            messagebox.showerror("오류", "Day 범위를 모두 입력해주세요.")
+            return False
+        
+        try:
+            day_start = int(values['day_start'])
+            day_end = int(values['day_end'])
+            
+            if day_start < 1:
+                messagebox.showerror("오류", "시작 Day는 1 이상이어야 합니다.")
+                return False
+            
+            if day_end < day_start:
+                messagebox.showerror("오류", "종료 Day는 시작 Day보다 크거나 같아야 합니다.")
+                return False
+            
+        except ValueError:
+            messagebox.showerror("오류", "Day 범위에는 숫자만 입력 가능합니다.")
+            return False
+        
         return True
 
     def get_validated_values(self):
@@ -146,6 +350,213 @@ class AppUI:
         if not self.validate_inputs():
             return None
         return self.get_input_values()
+
+    def on_start_click(self):
+        """시작 버튼 클릭 시 실행될 메서드"""
+        self.controller.set_state(ProgramState.RUNNING)
+        # TODO: 실제 시작 로직 구현
+        print("작업 시작")
+
+    def on_pause_click(self):
+        """일시정지 버튼 클릭 시 실행될 메서드"""
+        self.controller.set_state(ProgramState.PAUSED)
+        # TODO: 실제 일시정지 로직 구현
+        print("작업 일시정지")
+
+    def on_stop_click(self):
+        """중단 버튼 클릭 시 실행될 메서드"""
+        self.controller.set_state(ProgramState.IDLE)
+        # TODO: 실제 중단 로직 구현
+        print("작업 중단")
+
+# 매크로 클래스
+class DebugWindow:
+    def __init__(self):
+        self.window = tk.Toplevel()
+        self.window.title("Debug Console")
+        self.window.geometry("600x400")
+        
+        # 키보드 이벤트 바인딩
+        self.window.bind('<F2>', self._get_mouse_position)
+        
+        # 로그 출력을 위한 텍스트 영역
+        self.log_area = scrolledtext.ScrolledText(self.window, wrap=tk.WORD, height=15)
+        self.log_area.pack(padx=10, pady=5, fill=tk.BOTH, expand=True)
+        
+        # 테스트 버튼들을 위한 프레임
+        self.button_frame = ttk.LabelFrame(self.window, text="디버그 도구")
+        self.button_frame.pack(padx=10, pady=5, fill=tk.X)
+        
+        # 테스트 버튼들
+        ttk.Button(self.button_frame, text="창 감지 테스트", 
+                  command=self.test_window_detection).pack(side=tk.LEFT, padx=5, pady=5)
+        ttk.Button(self.button_frame, text="좌표 측정 (F2)", 
+                  command=self.measure_position).pack(side=tk.LEFT, padx=5, pady=5)
+        ttk.Button(self.button_frame, text="로그 지우기", 
+                  command=self.clear_log).pack(side=tk.RIGHT, padx=5, pady=5)
+
+    def log(self, message):
+        """로그 메시지 추가"""
+        self.log_area.insert(tk.END, f"{message}\n")
+        self.log_area.see(tk.END)  # 자동 스크롤
+
+    def clear_log(self):
+        """로그 지우기"""
+        self.log_area.delete(1.0, tk.END)
+
+    def test_window_detection(self):
+        """창 감지 테스트"""
+        self.log("창 감지 테스트 시작...")
+        try:
+            windows = pyautogui.getWindowsWithTitle("FactoryVoca")
+            self.log(f"FactoryVoca 관련 창 개수: {len(windows)}")
+            for window in windows:
+                self.log(f"찾은 창: {window.title}")
+                self.log(f"위치: ({window.left}, {window.top})")
+                self.log(f"크기: {window.width} x {window.height}")
+                self.log("---")
+        except Exception as e:
+            self.log(f"오류 발생: {str(e)}")
+
+    def measure_position(self):
+        """좌표 측정 시작"""
+        self.log("F2 키를 눌러 현재 마우스 위치를 측정합니다...")
+        self.window.focus_force()  # 디버그 창에 포커스 주기
+
+    def _get_mouse_position(self, event=None):
+        """현재 마우스 위치 측정"""
+        try:
+            # 현재 마우스 위치 가져오기
+            x, y = pyautogui.position()
+            
+            # FactoryVoca 창 찾기
+            windows = pyautogui.getWindowsWithTitle("FactoryVoca")
+            target_window = None
+            for window in windows:
+                if "http://cafe.naver.com/factoryvoca" in window.title:
+                    target_window = window
+                    break
+            
+            if target_window:
+                # 상대 좌표 계산
+                rel_x = x - target_window.left
+                rel_y = y - target_window.top
+                
+                self.log(f"절대 좌표: ({x}, {y})")
+                self.log(f"창 기준 상대 좌표: ({rel_x}, {rel_y})")
+                self.log(f"창 정보:")
+                self.log(f"- 창 위치: ({target_window.left}, {target_window.top})")
+                self.log(f"- 창 크기: {target_window.width} x {target_window.height}")
+                self.log(f"- 창 제목: {target_window.title}")
+                self.log("---")
+            else:
+                self.log("FactoryVoca 창을 찾을 수 없습니다.")
+                
+        except Exception as e:
+            self.log(f"오류 발생: {str(e)}")
+
+class MacroController:
+    def __init__(self):
+        # 기본 설정값 정의
+        self.default_config = {
+            'window_title': "FactoryVoca(http://cafe.naver.com/factoryvoca)",
+            'debug': False,
+            'relative_positions': {
+                'day_list_start': [50, 150],
+                'checkbox_offset': [20, 0],
+                'item_height': 20
+            }
+        }
+        
+        # 설정 로드
+        self.config = self.load_config()
+        
+        # 설정값 가져오기 (없으면 기본값 사용)
+        self.window_title = self.config.get('window_title', self.default_config['window_title'])
+        self.debug_mode = self.config.get('debug', self.default_config['debug'])
+        self.debug_window = None
+        
+        if self.debug_mode:
+            self.debug_window = DebugWindow()
+            
+    def log(self, message):
+        """디버그 로그 출력"""
+        if self.debug_mode and self.debug_window:
+            self.debug_window.log(message)
+
+    def load_config(self):
+        """config.json 파일에서 설정 로드"""
+        config_path = 'config.json'
+        
+        try:
+            if os.path.exists(config_path):
+                with open(config_path, 'r', encoding='utf-8') as f:
+                    return json.load(f)
+            else:
+                # config 파일이 없으면 기본값으로 생성
+                with open(config_path, 'w', encoding='utf-8') as f:
+                    json.dump(self.default_config, f, indent=4, ensure_ascii=False)
+                return self.default_config
+                
+        except Exception as e:
+            messagebox.showerror("설정 로드 오류", f"설정 파일을 로드하는 중 오류가 발생했습니다: {str(e)}")
+            return self.default_config
+            
+    def find_and_activate_window(self):
+        """정확한 창 제목으로 창을 찾아서 활성화"""
+        try:
+            windows = pyautogui.getWindowsWithTitle("FactoryVoca")
+            target_window = None
+            
+            for window in windows:
+                if window.title == self.window_title:
+                    target_window = window
+                    break
+                    
+            if target_window:
+                target_window.activate()
+                pyautogui.sleep(0.5)  # 활성화 대기
+                return target_window
+            else:
+                messagebox.showerror("오류", f"창을 찾을 수 없습니다: {self.window_title}")
+                return None
+                
+        except Exception as e:
+            messagebox.showerror("오류", f"창을 찾는 중 오류가 발생했습니다: {str(e)}")
+            return None
+            
+    def select_days(self, start_day: int, end_day: int):
+        """지정된 범위의 Day들을 선택"""
+        if not self.find_and_activate_window():
+            return False
+            
+        try:
+            # Day 리스트가 있는 영역의 좌표를 찾음
+            # 이미지 인식을 사용하여 리스트 영역 찾기
+            list_region = pyautogui.locateOnScreen('day_list.png', confidence=0.9)
+            if not list_region:
+                messagebox.showerror("오류", "Day 리스트를 찾을 수 없습니다.")
+                return False
+                
+            # 첫 번째 Day 항목의 체크박스 위치 찾기
+            checkbox_x = list_region.left + 20  # 체크박스는 리스트의 왼쪽에 있음
+            first_item_y = list_region.top + 25  # 첫 번째 항목의 y 좌표
+            item_height = 20  # 각 항목의 높이
+            
+            # 원하는 Day 범위만큼 체크박스 클릭
+            for day in range(start_day, end_day + 1):
+                # Day 항목의 y 좌표 계산
+                item_y = first_item_y + (day - 1) * item_height
+                
+                # 체크박스 클릭
+                pyautogui.click(checkbox_x, item_y)
+                pyautogui.sleep(0.1)  # 약간의 딜레이
+                
+            return True
+            
+        except Exception as e:
+            messagebox.showerror("오류", f"Day 선택 중 오류 발생: {str(e)}")
+            return False
 
 # 메인 코드 실행
 if __name__ == "__main__":
