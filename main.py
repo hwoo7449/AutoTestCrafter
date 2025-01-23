@@ -1,10 +1,9 @@
 import tkinter as tk
 from tkinter import ttk, scrolledtext
 import tkinter.messagebox as messagebox
+from datetime import datetime
 from enum import Enum, auto
-import pyautogui
-import json
-import os
+import pyautogui, json, time, os
 
 class WordbookType(Enum):
     ORIGINAL = "원래 순서"
@@ -46,9 +45,11 @@ class Controller:
             "Output": "/output",
         }
 
-    def log(self, message):
+    def log(self, message: str):
         """로그 메시지를 출력"""
-        print(message)  # 항상 콘솔에 출력
+        current_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        log_message = f"[{current_time}] {message}"
+        print(log_message)  # 항상 콘솔에 출력
         if self.debug_window:  # 디버그 모드일 경우 디버그 콘솔에도 출력
             self.debug_window.log(message)
 
@@ -113,6 +114,10 @@ class AppUI:
 
         # UI 요소 구성
         self.create_widgets()
+        
+    def log(self, message):
+        """컨트롤러의 로그 기능 사용"""
+        self.controller.log(message)
 
     def create_widgets(self):
         # Label (레이블: 텍스트 표시)
@@ -335,9 +340,30 @@ class AppUI:
         
         return True
 
-    def get_checklist_status(self):
-            """체크리스트 상태를 딕셔너리로 반환"""
-            return {item: var.get() for item, var in self.checkbox_vars.items()}
+    # def get_checklist_status(self):
+    #         """체크리스트 상태를 딕셔너리로 반환"""
+    #         return {item: var.get() for item, var in self.checkbox_vars.items()}
+    def disable_inputs(self):
+        """입력 필드와 콤보박스를 비활성화"""
+        for input_field in self.inputs.values():
+            input_field.configure(state="disabled")
+        self.inputs['type'].configure(state="disabled")  # 콤보박스도 비활성화
+        
+    def enable_inputs(self):
+        """입력 필드와 콤보박스를 활성화"""
+        for input_field in self.inputs.values():
+            input_field.configure(state="normal")
+        
+        # 콤보박스는 다시 readonly로 설정
+        self.inputs['type'].configure(state="readonly")
+        
+        # type이 "원래 순서"인 경우 버전 입력 필드 비활성화
+        selected_type = WordbookType.from_string(self.inputs['type'].get())
+        if selected_type == WordbookType.ORIGINAL:
+            self.inputs['version'].configure(state="disabled")
+        else:
+            self.inputs['version'].configure(state="normal")
+    
 
     def validate_checklist(self):
         """모든 항목이 체크되었는지 확인"""
@@ -355,6 +381,7 @@ class AppUI:
         if not self.validate_inputs():
             return None
         return self.get_input_values()
+    
 
     def on_start_click(self):
         """시작 버튼 클릭 시 실행될 메서드"""
@@ -367,21 +394,32 @@ class AppUI:
         if not self.validate_checklist():
             return
         
+        # 입력 필드 비활성화
+        self.disable_inputs()
+        
+        # 상태 변경
         self.controller.set_state(ProgramState.RUNNING)
+        
+        # 매크로 시작
         self.controller.macro.start_macro()
-        print("작업 시작")
+        self.log("작업 시작")
 
     def on_pause_click(self):
         """일시정지 버튼 클릭 시 실행될 메서드"""
         self.controller.set_state(ProgramState.PAUSED)
         # TODO: 실제 일시정지 로직 구현
-        print("작업 일시정지")
+        self.log("작업 일시정지")
+
 
     def on_stop_click(self):
         """중단 버튼 클릭 시 실행될 메서드"""
         self.controller.set_state(ProgramState.IDLE)
+        # 입력 필드 활성화
+        self.enable_inputs()
+        
         # TODO: 실제 중단 로직 구현
-        print("작업 중단")
+        self.log("작업 중단")
+
 
 # 매크로 클래스
 class DebugWindow:
@@ -521,8 +559,10 @@ class DebugWindow:
 
     def log(self, message):
         """로그 메시지를 콘솔과 디버그 콘솔에 출력"""
-        self.log_area.insert(tk.END, f"{message}\n")
-        self.log_area.see(tk.END)  # 자동 스크롤# 자동 스크롤
+        current_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        log_message = f"[{current_time}] {message}"
+        self.log_area.insert(tk.END, f"{log_message}\n")
+        self.log_area.see(tk.END) # 자동 스크롤
 
     def clear_log(self):
         """로그 지우기"""
@@ -592,21 +632,28 @@ class MacroController:
     def find_and_activate_window(self):
         """정확한 창 제목으로 창을 찾아서 활성화"""
         try:
+            start_time = time.time()
             windows = pyautogui.getWindowsWithTitle("FactoryVoca")
             
             for window in windows:
                 if window.title == Config.get_window_title():
                     window.activate()
+                    end_time = time.time()
+                    self.log(f"창 찾기 소요 시간: {end_time - start_time}초")
                     pyautogui.sleep(0.5)  # 활성화 대기
                     return window
-                
         except Exception as e:
             messagebox.showerror("오류", f"창을 찾는 중 오류가 발생했습니다: {str(e)}")
             return None
 
     def start_macro(self):
         """매크로 시작"""
-        pass
+        self.log("매크로 시작")
+        
+        input_values = self.controller.view.get_input_values()
+        if input_values is None:
+            self.log("입력 값이 유효하지 않습니다. 매크로를 중단합니다.")
+            return
 
     def click_position(self, position_key):
         """설정된 위치 클릭"""
