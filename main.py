@@ -392,8 +392,113 @@ class DebugWindow:
                   command=self.test_window_detection).pack(side=tk.LEFT, padx=5, pady=5)
         ttk.Button(self.button_frame, text="좌표 측정 (F2)", 
                   command=self.measure_position).pack(side=tk.LEFT, padx=5, pady=5)
+        
+        # 위치 테스트 프레임
+        test_frame = ttk.LabelFrame(self.window, text="위치 테스트")
+        test_frame.pack(padx=10, pady=5, fill=tk.X)
+        
+        # 위치 테스트 버튼들
+        ttk.Button(test_frame, text="전체 위치 순차 이동", 
+                  command=lambda: self.test_all_positions(move_only=True)).pack(side=tk.LEFT, padx=5, pady=5)
+        ttk.Button(test_frame, text="전체 위치 순차 클릭", 
+                  command=lambda: self.test_all_positions(move_only=False)).pack(side=tk.LEFT, padx=5, pady=5)
+        ttk.Button(test_frame, text="개별 위치 테스트", 
+                  command=self.show_position_test_window).pack(side=tk.LEFT, padx=5, pady=5)
+        
         ttk.Button(self.button_frame, text="로그 지우기", 
                   command=self.clear_log).pack(side=tk.RIGHT, padx=5, pady=5)
+
+    def show_position_test_window(self):
+        """개별 위치 테스트 창 표시"""
+        test_window = tk.Toplevel(self.window)
+        test_window.title("개별 위치 테스트")
+        test_window.geometry("300x400")
+        
+        # 모든 위치 정보 가져오기
+        positions = self._get_all_positions()
+        
+        # 스크롤 가능한 프레임 생성
+        canvas = tk.Canvas(test_window)
+        scrollbar = ttk.Scrollbar(test_window, orient="vertical", command=canvas.yview)
+        scrollable_frame = ttk.Frame(canvas)
+
+        scrollable_frame.bind(
+            "<Configure>",
+            lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
+        )
+
+        canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
+        canvas.configure(yscrollcommand=scrollbar.set)
+        
+        # 각 위치에 대한 테스트 버튼 생성
+        for pos_name in positions:
+            frame = ttk.Frame(scrollable_frame)
+            frame.pack(fill="x", padx=5, pady=2)
+            
+            ttk.Label(frame, text=pos_name).pack(side="left", padx=5)
+            ttk.Button(frame, text="이동", 
+                      command=lambda n=pos_name: self.test_single_position(n, True)).pack(side="right", padx=2)
+            ttk.Button(frame, text="클릭", 
+                      command=lambda n=pos_name: self.test_single_position(n, False)).pack(side="right", padx=2)
+        
+        canvas.pack(side="left", fill="both", expand=True)
+        scrollbar.pack(side="right", fill="y")
+
+    def _get_all_positions(self):
+        """config에서 모든 위치 정보 가져오기"""
+        return Config.get_all_positions()
+
+    def test_single_position(self, position_name, move_only=True):
+        """단일 위치 테스트"""
+        self.log(f"테스트 위치: {position_name}")
+        
+        try:
+            # 창 찾기
+            windows = pyautogui.getWindowsWithTitle("FactoryVoca")
+            target_window = None
+            for window in windows:
+                if Config.get_window_title() == window.title:
+                    target_window = window
+                    break
+
+            if not target_window:
+                self.log("창을 찾을 수 없습니다.")
+                return
+                
+            # 좌표 가져오기
+            coords = Config.get_position(position_name)
+            if not coords:
+                self.log(f"좌표를 찾을 수 없습니다: {position_name}")
+                return
+            
+            abs_x = target_window.left + coords[0]
+            abs_y = target_window.top + coords[1]
+            
+            if move_only:
+                pyautogui.moveTo(abs_x, abs_y)
+                self.log(f"이동 완료: {position_name} ({coords[0]}, {coords[1]})")
+            else:
+                pyautogui.click(abs_x, abs_y)
+                self.log(f"클릭 완료: {position_name} ({coords[0]}, {coords[1]})")
+                
+        except Exception as e:
+            self.log(f"테스트 중 오류 발생: {str(e)}")
+
+    def test_all_positions(self, move_only=True):
+        """모든 위치 순차 테스트"""
+        positions = self._get_all_positions()
+        
+        self.log("전체 위치 테스트 시작...")
+        
+        def test_next_position(index):
+            if index < len(positions):
+                position_name = positions[index]
+                self.test_single_position(position_name, move_only)
+                self.window.after(1000, test_next_position, index + 1)
+            else:
+                self.log("전체 위치 테스트 완료")
+        
+        test_next_position(0)
 
     def log(self, message):
         """로그 메시지 추가"""
@@ -442,13 +547,15 @@ class DebugWindow:
                 rel_x = x - target_window.left
                 rel_y = y - target_window.top
                 
-                self.log(f"절대 좌표: ({x}, {y})")
-                self.log(f"창 기준 상대 좌표: ({rel_x}, {rel_y})")
+                self.log("---")
                 self.log(f"창 정보:")
                 self.log(f"- 창 위치: ({target_window.left}, {target_window.top})")
                 self.log(f"- 창 크기: {target_window.width} x {target_window.height}")
                 self.log(f"- 창 제목: {target_window.title}")
-                self.log("---")
+                
+                self.log(f"절대 좌표: ({x}, {y})")
+                self.log(f"창 기준 상대 좌표: ({rel_x}, {rel_y})")
+                
             else:
                 self.log("FactoryVoca 창을 찾을 수 없습니다.")
                 
@@ -461,10 +568,28 @@ class MacroController:
         self.default_config = {
             'window_title': "FactoryVoca(http://cafe.naver.com/factoryvoca)",
             'debug': False,
-            'relative_positions': {
-                'day_list_start': [50, 150],
-                'checkbox_offset': [20, 0],
-                'item_height': 20
+            'ui_positions': {
+                'day_list': {
+                    'first_day': [50, 150]
+                },
+                'selected_day': {
+                    'position': [400, 150]
+                },
+                'buttons': {
+                    'add_day': [450, 200],
+                    'remove_day': [450, 230],
+                    'load_day': [450, 260],
+                    'apply': [800, 300],
+                    'random_apply': [800, 330],
+                    'print': [800, 360]
+                },
+                'inputs': {
+                    'word_count': [700, 150],
+                    'eng_to_kor': [700, 200]
+                },
+                'checkboxes': {
+                    'show_first_letter': [700, 250]
+                }
             }
         }
         
@@ -558,9 +683,211 @@ class MacroController:
             messagebox.showerror("오류", f"Day 선택 중 오류 발생: {str(e)}")
             return False
 
+    def click_position(self, position_key):
+        """설정된 위치 클릭"""
+        try:
+            # 창 찾고 활성화
+            window = self.find_and_activate_window()
+            if not window:
+                return False
+                
+            # position_key에 해당하는 좌표 찾기 (예: 'buttons.add_day')
+            coords = self.get_position_from_config(position_key)
+            if not coords:
+                self.log(f"좌표를 찾을 수 없습니다: {position_key}")
+                return False
+                
+            # 상대 좌표를 절대 좌표로 변환
+            abs_x = window.left + coords[0]
+            abs_y = window.top + coords[1]
+            
+            # 클릭
+            pyautogui.click(abs_x, abs_y)
+            pyautogui.sleep(0.1)  # 약간의 딜레이
+            return True
+            
+        except Exception as e:
+            self.log(f"클릭 중 오류 발생: {str(e)}")
+            return False
+
+    def get_position_from_config(self, position_key):
+        """config에서 위치 정보 가져오기"""
+        try:
+            # 키를 점(.)으로 분리하여 딕셔너리 탐색
+            keys = position_key.split('.')
+            value = self.config['ui_positions']
+            for key in keys:
+                value = value[key]
+            return value
+        except (KeyError, TypeError):
+            return None
+
+    def select_day(self, day_number):
+        """특정 Day 선택"""
+        try:
+            # Day 리스트 첫 위치 클릭
+            if not self.click_position('day_list.first_day'):
+                return False
+                
+            # Home 키로 맨 위로 이동
+            pyautogui.press('home')
+            pyautogui.sleep(0.1)
+            
+            # 원하는 Day까지 아래 화살표로 이동
+            for _ in range(day_number - 1):
+                pyautogui.press('down')
+                pyautogui.sleep(0.05)
+                
+            return True
+            
+        except Exception as e:
+            self.log(f"Day 선택 중 오류 발생: {str(e)}")
+            return False
+
+    def set_word_count(self, count):
+        """출제 단어 수 설정"""
+        try:
+            if not self.click_position('inputs.word_count'):
+                return False
+            
+            pyautogui.write(str(count))
+            return True
+            
+        except Exception as e:
+            self.log(f"단어 수 설정 중 오류 발생: {str(e)}")
+            return False
+
+    def set_eng_to_kor(self, value):
+        """영한 비율 설정"""
+        try:
+            if not self.click_position('inputs.eng_to_kor'):
+                return False
+            
+            pyautogui.write(str(value))
+            return True
+            
+        except Exception as e:
+            self.log(f"영한 비율 설정 중 오류 발생: {str(e)}")
+            return False
+
+    def toggle_first_letter(self):
+        """첫글자 보여주기 토글"""
+        return self.click_position('checkboxes.show_first_letter')
+
+    def add_selected_day(self):
+        """Day 추가"""
+        return self.click_position('buttons.add_day')
+
+    def remove_selected_day(self):
+        """Day 제거"""
+        return self.click_position('buttons.remove_day')
+
+    def load_day(self):
+        """Day 불러오기"""
+        return self.click_position('buttons.load_day')
+
+    def apply_settings(self):
+        """설정 적용"""
+        return self.click_position('buttons.apply')
+
+    def apply_random_settings(self):
+        """무작위 설정 적용"""
+        return self.click_position('buttons.random_apply')
+
+    def print_wordbook(self):
+        """단어장 출력"""
+        return self.click_position('buttons.print')
+
+class Config:
+    # 클래스 변수로 설정
+    _config = {
+        'window_title': "FactoryVoca(http://cafe.naver.com/factoryvoca)",
+        'debug': True,
+        'ui_positions': {
+            'day_list': {
+                'first_day': [50, 150]
+            },
+            'selected_day': {
+                'position': [400, 150]
+            },
+            'buttons': {
+                'add_day': [450, 200],
+                'remove_day': [450, 230],
+                'load_day': [450, 260],
+                'apply': [800, 300],
+                'random_apply': [800, 330],
+                'print': [800, 360]
+            },
+            'inputs': {
+                'word_count': [700, 150],
+                'eng_to_kor': [700, 200]
+            },
+            'checkboxes': {
+                'show_first_letter': [700, 250]
+            }
+        }
+    }
+
+    @classmethod
+    def load(cls):
+        """config.json 파일에서 설정 로드"""
+        config_path = 'config.json'
+        try:
+            if os.path.exists(config_path):
+                with open(config_path, 'r', encoding='utf-8') as f:
+                    cls._config = json.load(f)
+            else:
+                with open(config_path, 'w', encoding='utf-8') as f:
+                    json.dump(cls._config, f, indent=4, ensure_ascii=False)
+        except Exception as e:
+            print(f"설정 로드 오류: {str(e)}")
+
+    @classmethod
+    def get_position(cls, position_key):
+        """position_key에 해당하는 좌표 반환"""
+        try:
+            keys = position_key.split('.')
+            value = cls._config['ui_positions']
+            for key in keys:
+                value = value[key]
+            return value
+        except (KeyError, TypeError):
+            return None
+
+    @classmethod
+    def get_all_positions(cls):
+        """모든 위치 정보 반환"""
+        positions = []
+        
+        def collect_positions(data, prefix=''):
+            for key, value in data.items():
+                if isinstance(value, dict):
+                    collect_positions(value, f"{prefix}{key}.")
+                elif isinstance(value, list):
+                    positions.append(f"{prefix}{key}")
+        
+        collect_positions(cls._config['ui_positions'])
+        return positions
+
+    @classmethod
+    def get_window_title(cls):
+        """창 제목 반환"""
+        return cls._config.get('window_title')
+
+    @classmethod
+    def is_debug_mode(cls):
+        """디버그 모드 여부 반환"""
+        return cls._config.get('debug', True)
+
+
 # 메인 코드 실행
 if __name__ == "__main__":
     root = tk.Tk()  # Tkinter 메인 윈도우 생성
+    Config.load()  # 설정 파일 로드
+    
+    if Config.is_debug_mode():
+        debug_window = DebugWindow()
+    
     controller = Controller(None)  # 컨트롤러 인스턴스 생성
     app = AppUI(root, controller)  # UI 클래스 생성 및 연결
     controller.view = app  # 컨트롤러에 UI 인스턴스 연결
