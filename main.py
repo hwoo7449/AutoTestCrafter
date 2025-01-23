@@ -624,10 +624,17 @@ class DebugWindow:
 class MacroController:
     def __init__(self, controller: Controller):
         self.controller = controller
+        
+        self.auto_answer_save = False
 
     def log(self, message):
         """컨트롤러의 로그 기능 사용"""
         self.controller.log(message)
+        
+    def debug_log(self, message):
+        """디버그 로그 출력"""
+        if Config.is_debug_mode():
+            self.log(message)
 
     def find_and_activate_window(self):
         """정확한 창 제목으로 창을 찾아서 활성화"""
@@ -639,8 +646,8 @@ class MacroController:
                 if window.title == Config.get_window_title():
                     window.activate()
                     end_time = time.time()
-                    self.log(f"창 찾기 소요 시간: {end_time - start_time}초")
-                    pyautogui.sleep(0.5)  # 활성화 대기
+                    self.debug_log(f"창 찾기 소요 시간: {end_time - start_time}초")
+                    pyautogui.sleep(0.1)  # 활성화 대기
                     return window
         except Exception as e:
             messagebox.showerror("오류", f"창을 찾는 중 오류가 발생했습니다: {str(e)}")
@@ -648,13 +655,51 @@ class MacroController:
 
     def start_macro(self):
         """매크로 시작"""
-        self.log("매크로 시작")
+        self.debug_log("매크로 시작")
         
-        input_values = self.controller.view.get_input_values()
-        if input_values is None:
+        self.input_values = self.controller.view.get_input_values()
+        if self.input_values is None:
             self.log("입력 값이 유효하지 않습니다. 매크로를 중단합니다.")
             return
-
+        try:
+            day_start = int(self.input_values['day_start'])
+            day_end = int(self.input_values['day_end'])
+        except ValueError:
+            messagebox.showerror("치명적인 오류", "Day 범위에는 숫자만 입력 가능합니다.")
+            self.stop_macro(f"Day 범위에는 숫자만 입력 가능합니다.")
+            return
+        
+        for day in range(day_start, day_end + 1):
+            if not self.auto_answer_save:
+                self.toggle_auto_answer_save()
+            
+            if self.input_values['type'] == WordbookType.ORIGINAL:
+                self.click_selected_day()
+                
+                self.remove_selected_day()
+                
+                # 단어 선택
+                if not self.select_day(day):
+                    self.stop_macro(f"Day {day} 선택 실패")
+                    return
+                
+                self.add_selected_day()
+                
+                self.load_day()
+                
+                pyautogui.sleep(3)
+                
+                #self.print_wordbook()
+                
+            
+    def stop_macro(self, e = None):
+        """매크로 중단 (에러 등)"""
+        self.log("매크로 중단")
+        if e:
+            self.log("원인: " + str(e))
+        self.controller.view.on_stop_click()
+        pass
+        
     def click_position(self, position_key):
         """설정된 위치 클릭"""
         try:
@@ -675,7 +720,7 @@ class MacroController:
             
             # 클릭
             pyautogui.click(abs_x, abs_y)
-            pyautogui.sleep(0.1)  # 약간의 딜레이
+            pyautogui.sleep(0.5)  # 약간의 딜레이
             return True
             
         except Exception as e:
@@ -694,8 +739,8 @@ class MacroController:
         except (KeyError, TypeError):
             return None
 
-    def select_day(self, day_number):
-        """특정 Day 선택"""
+    def select_day(self, day_number: int):
+        """특정 Day 선택 (PageDown 활용)"""
         try:
             # Day 리스트 첫 위치 클릭
             if not self.click_position('day_list.first_day'):
@@ -705,11 +750,20 @@ class MacroController:
             pyautogui.press('home')
             pyautogui.sleep(0.1)
             
-            # 원하는 Day까지 아래 화살표로 이동
-            for _ in range(day_number - 1):
+            # PageDown을 사용하여 대략적인 위치로 이동
+            page_size = Config.get_value('page_down_size') # PageDown 한 번에 16개씩 이동 (예: 1 -> 17 -> 33)
+            page_jumps = (day_number - 1) // page_size  # 필요한 PageDown 횟수 계산
+
+            for _ in range(page_jumps):
+                pyautogui.press('pagedown')
+                pyautogui.sleep(0.1)  # 페이지 이동 후 약간의 딜레이
+
+            # 남은 Day는 아래 화살표로 이동
+            remaining_days = (day_number - 1) % page_size
+            for _ in range(remaining_days):
                 pyautogui.press('down')
-                pyautogui.sleep(0.05)
-                
+                pyautogui.sleep(0.1)
+
             return True
             
         except Exception as e:
@@ -742,6 +796,12 @@ class MacroController:
             self.log(f"영한 비율 설정 중 오류 발생: {str(e)}")
             return False
 
+    def toggle_auto_answer_save(self):
+        """자동 저장 토글"""
+        self.auto_answer_save = not self.auto_answer_save
+        self.debug_log("자동 저장 토글")
+        return self.click_position('checkboxes.auto_answer_save')
+
     def toggle_first_letter(self):
         """첫글자 보여주기 토글"""
         return self.click_position('checkboxes.show_first_letter')
@@ -765,6 +825,10 @@ class MacroController:
     def apply_random_settings(self):
         """무작위 설정 적용"""
         return self.click_position('buttons.random_apply')
+    
+    def click_selected_day(self):
+        """선택된 Day 클릭"""
+        return self.click_position('selected_day.position')
 
     def print_wordbook(self):
         """단어장 출력"""
@@ -815,6 +879,11 @@ class Config:
             print(f"설정 로드 오류: {str(e)}")
 
     @classmethod
+    def get_value(cls, key):
+        """key에 해당하는 값 반환"""
+        return cls._config.get(key)
+
+    @classmethod
     def get_position(cls, position_key):
         """position_key에 해당하는 좌표 반환"""
         try:
@@ -847,9 +916,9 @@ class Config:
         return cls._config.get('window_title')
 
     @classmethod
-    def is_debug_mode(cls):
+    def is_debug_mode(cls) -> bool:
         """디버그 모드 여부 반환"""
-        return cls._config.get('debug', True)
+        return cls._config.get('debug', False)
 
 # 메인 코드 실행
 if __name__ == "__main__":
